@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project data: NASA files are downloaded locally, never committed (verify with data/raw/CHECKSUMS.txt)
+data/raw/*
+!data/raw/CHECKSUMS.txt
+data/processed/
