@@ -1,0 +1,16 @@
+# Shared settings. Code reads numbers from here; nothing is hard-coded.
+# Only values already agreed in the proposal / CLAUDE.md live here.
+# Open choices (val fraction, model size, E, R, lr, mu, FedLA bins/clip) are added
+# by the decisions PR or frozen at Gate 3, never guessed.
+data:
+  fd: FD004
+  raw_dir: data/raw
+  processed_dir: data/processed/FD004
+  n_conditions: 6        # FD004 has 6 operating conditions (FD001 has 1)
+  window: 30             # cycles per input window
+  rul_cap: 125           # label = min(Te - t, 125)
+  split_seed: 0          # engine-level train/val split; fixed forever
+fl:
+  K: 5                   # number of simulated clients
+eval:
+  threshold: 1.10        # rounds to 110% of centralized validation MAE
