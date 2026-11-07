@@ -9,7 +9,10 @@ data:
   n_conditions: 6        # FD004 has 6 operating conditions (FD001 has 1)
   window: 30             # cycles per input window
   rul_cap: 125           # label = min(Te - t, 125)
-  split_seed: 0          # engine-level train/val split; fixed forever
+  split_seed: 0          # engine-level train/val split; fixed forever (DECISIONS D1)
+  val_frac: 0.2          # 50 of 249 FD004 training engines go to validation (D1)
+  const_std_tol: 1.0e-8  # drop sensor if its std is <= this in every condition (D4)
+  cap_test_labels: true  # headline test labels capped at rul_cap; uncapped kept too (D8)
 fl:
   K: 5                   # number of simulated clients
 eval:
