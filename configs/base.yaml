@@ -13,7 +13,41 @@ data:
   val_frac: 0.2          # 50 of 249 FD004 training engines go to validation (D1)
   const_std_tol: 1.0e-8  # drop sensor if its std is <= this in every condition (D4)
   cap_test_labels: true  # headline test labels capped at rul_cap; uncapped kept too (D8)
+train:                   # centralized training (DECISIONS M3, M5)
+  batch: 256
+  clip: 1.0              # gradient-norm clipping
+  max_epochs: 100
+  patience: 10           # early stop after this many epochs without val-MAE improvement
+  device: cpu
+tuning:                  # run once on validation, then the winner is frozen as `model:` (M2)
+  hidden: [32, 64, 128]
+  layers: [1, 2]
+  lr: [0.001, 0.003]
+  dropout_if_2_layers: 0.2
+  seeds_first_pass: [1]
+  seeds_confirm: [1, 2, 3]
+  top_k_confirm: 2
 fl:
   K: 5                   # number of simulated clients
+  batch: 256             # F2
+  clip: 1.0              # F2
+  mu_grid: [0.001, 0.01, 0.1, 1.0]    # F5, selected at H = 1 on validation
+  pilot:                 # F7; E, R, lr are frozen after the pilot
+    E: [1, 3]
+    lr_factors: [1.0, 0.333]          # x tuned centralized lr
+    R: 60
+    H: [0.0, 1.0]
+fedla:                   # DECISIONS LA1-LA2
+  bin_edges: [0, 25, 50, 75, 100, 125]   # plus the capped bin {125}
+  clip: [0.1, 10.0]
+partition:               # DECISIONS PT1-PT7
+  H_grid: [0.0, 0.25, 0.5, 0.75, 1.0]
+  min_engines_per_client: 10
+  manifests_dir: manifests
+seeds:
+  main: [1, 2, 3, 4, 5]
+  selection: [101, 102, 103]          # mu selection (F5); never the reported seeds
+  pilot: [101, 102]
 eval:
-  threshold: 1.10        # rounds to 110% of centralized validation MAE
+  threshold: 1.10        # rounds to 110% of centralized validation MAE (E3)
+  life_stage_edges: [50, 125]   # near failure < 50, mid 50-124, healthy >= 125 (E4)
