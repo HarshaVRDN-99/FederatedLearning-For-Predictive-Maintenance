@@ -1,0 +1,4 @@
+# Store and check out these files byte-for-byte (no LF -> CRLF conversion on Windows):
+# their SHA-256 hashes are recorded and checked, so a changed line ending would look like a changed file.
+tests/data/** -text
+data/raw/CHECKSUMS.txt -text
