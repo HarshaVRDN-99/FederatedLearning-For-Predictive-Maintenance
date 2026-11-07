@@ -21,9 +21,9 @@ Status: Data ✅ · Model ✅ · Partition ✅ · FL (FedAvg / FedProx) ✅ · F
 | # | Decision | Reason |
 |---|---|---|
 | D1 | Validation = 20% of FD004 training engines (50 of 249), chosen once with `split_seed: 0`, fixed forever. Split by engine before windowing | ~40 train engines per client at K = 5; ~10 validation engines per client for worst-client MAE |
-| D2 | Operating condition of a row = its settings rounded (altitude to integer, Mach to 2 dp, throttle to integer). The set of conditions is read from training-split rows | Real jitter is ≤ 0.008, so rounding is exact; no clustering library or random init needed |
+| D2 | Operating condition of a row = its settings rounded to whole numbers: altitude, Mach × 100, throttle (key like `42_84_100`). The set of conditions is read from training-split rows | Real jitter is ≤ 0.008, so rounding is exact; no clustering library or random init needed. Whole numbers avoid FD001's jitter around Mach 0 splitting into "0.0" and "-0.0" (found by a test) |
 | D3 | Each sensor is z-scored per operating condition, using mean and std from training-split rows only, pooled over all clients | Same input features at every H and every arm, so differences come only from label skew. Limitation for the report: a real federation could not pool raw statistics |
-| D4 | Drop a sensor column only if its std is zero (≤ 1e-8) within every operating condition, measured on training-split rows; the same columns are then dropped from train, validation and test. Raw files are never modified | Such a sensor only encodes the condition (already in the one-hot, D5) and would divide by zero in per-condition z-scoring. On real FD004 this drops sensors 0, 4, 17, 18 (0-based) and keeps 17. A first proposal (std < 0.1% of mean) was rejected after checking real data: it would have dropped sensors 1, 7, 12, which trend with wear |
+| D4 | Drop a sensor column only if its std is zero (≤ 1e-8) within every operating condition, measured on training-split rows; the same columns are then dropped from train, validation and test. Raw files are never modified | Such a sensor only encodes the condition (already in the one-hot, D5) and would divide by zero in per-condition z-scoring. On real FD004 this drops s1, s5, s18, s19 (NASA numbering) and keeps 17. A first proposal (std < 0.1% of mean) was rejected after checking real data: it would have dropped s2, s8, s13, which trend with wear. Where a kept sensor is constant in one condition only (s16 in 4 of 6 FD004 conditions), its normalised value in that condition is set to 0 (no division by zero) |
 | D5 | Input per cycle = kept normalised sensors + one-hot of the operating condition | Normalisation removes the condition's level; the one-hot keeps which condition the cycle was in |
 | D6 | Train and validation windows: every 30-cycle window (stride 1), label `min(T − t, 125)` at the window's last cycle. Validation MAE uses all validation windows | All-window validation MAE is stable; it drives model selection |
 | D7 | Test input = last 30 cycles per test engine; engines shorter than 30 are left-padded by repeating their first cycle | A repeated early cycle looks like the healthy engine it is; zero padding would insert fake "average" readings |
@@ -39,7 +39,12 @@ build_dataset(cfg: dict) -> Dataset
 #   X_test (n_test_engines, 30, f), y_test, y_test_uncapped
 #   feature_names: list[str]
 #   train_engine_lifetimes: dict[int, int]                 engine id -> total cycles (for the partitioner)
+#   val_engine_lifetimes: dict[int, int]                   same for validation engines (routing, PT5)   [added when built]
+#   scaler: Scaler                                         conditions, kept/dropped sensors, per-condition mean/std [added when built]
 ```
+
+As built (real FD004): 43,064 train windows (199 engines), 10,964 validation windows (50 engines), 248 test windows,
+23 features (17 sensors + 6 condition one-hot). Builds in under a second, so it is rebuilt in memory, not cached.
 
 ## Model
 
