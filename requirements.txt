@@ -1,14 +1,10 @@
 # Direct dependencies, pinned. Python 3.12.
 # The exact versions of EVERYTHING (including sub-dependencies) live in requirements.lock,
-# generated with `pip freeze > requirements.lock`. Install from the lock file, not this one.
-# Adding a package here needs team agreement (CLAUDE.md rule 7).
-numpy==2.4.4
-pandas==3.0.2
-scikit-learn==1.8.0
-scipy==1.17.1
-statsmodels==0.15.0
-matplotlib==3.10.8
-PyYAML==6.0.3
-pytest==9.2.0
-torch==2.15.0
-flwr[simulation]==1.42.0
+# generated with `pip freeze`. Install from the lock file, not this one.
+# A package is added only when code needs it, with the reason noted here (CLAUDE.md rule 7).
+numpy==2.4.4            # arrays everywhere
+pandas==3.0.2           # reading the space-separated NASA files, per-engine grouping
+PyYAML==6.0.3           # configs/*.yaml
+pytest==9.2.0           # tests
+torch==2.15.0           # GRU model and training (CPU build, see requirements.lock)
+flwr[simulation]==1.42.0  # Flower ClientApp/ServerApp + simulation engine (Gate 2)
