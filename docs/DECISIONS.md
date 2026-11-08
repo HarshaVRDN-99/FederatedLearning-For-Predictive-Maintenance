@@ -54,7 +54,7 @@ As built (real FD004): 43,064 train windows (199 engines), 10,964 validation win
 | M2 | Tuned once, centralized, on validation MAE only: hidden {32, 64, 128} × layers {1, 2} × lr {0.001, 0.003} (12 configs, seed 1). Top 2 rerun with seeds 1–3; lower mean wins. Dropout 0.2 between GRU layers when layers = 2, else 0. Then frozen for every arm | Small grid a laptop can run; covers common FD004 sizes. Never retuned on federated results (CLAUDE.md) |
 | M3 | Loss = MSE on y/125 (model outputs RUL/125). Adam, batch 256, gradient-norm clip 1.0. Centralized: max 100 epochs, early stop after 10 epochs without validation-MAE improvement, keep best epoch | Targets in 0–1 train more smoothly; clipping guards against GRU gradient spikes; early stopping prevents overfitting |
 | M4 | Evaluation (validation and test, every arm) uses one function: prediction = clamp(model(x) × 125, 0, 125). Training loss is unclamped | RUL cannot be negative and labels never exceed 125. Clamping during training would block gradients; a sigmoid output would saturate on the many labels at the cap |
-| M5 | All registered runs on CPU, seeded (init, batch order) with `torch.use_deterministic_algorithms(True)`. Revisit after tuning: if the frozen model is too slow on CPU, ALL registered runs move to GPU together, never mixed | Measured on a 12-thread laptop CPU (random data, real shapes, 40k windows): 1.7 s/epoch (32×1) to 10.8 s/epoch (128×2), i.e. ~7–42 min per federated run. Mixing devices would add numerical noise to paired comparisons, and the expected FedAvg/FedProx differences are small. One CPU lock file for everyone |
+| M5 | All registered runs on CPU, seeded (init, batch order) with `torch.use_deterministic_algorithms(True)`. Revisit after tuning: if the frozen model is too slow on CPU, ALL registered runs move to GPU together, never mixed | Measured on a 12-thread laptop CPU (random data, real shapes, 40k windows): 1.7 s/epoch (32×1) to 10.8 s/epoch (128×2), i.e. ~7–42 min per federated run. Mixing devices would add numerical noise to paired comparisons, and the expected FedAvg/FedProx differences are small. One CPU lock file for everyone. [added when built] CPU thread count also changes results (~7th digit; measured 1 vs 3 vs 12 threads), so every registered run uses the same count: 3 (from the parallel-throughput benchmark), set by the runner |
 
 Frozen signatures:
 
@@ -64,8 +64,10 @@ class RULModel(nn.Module):
     def forward(self, x: Tensor) -> Tensor:   # x (batch, 30, n_features) -> (batch,)  RUL / 125
     # submodules: self.gru, self.head
 
-predict_rul(model, X) -> np.ndarray            # clamp(model(X) * 125, 0, 125)   (M4)
+predict_rul(model, X, cap) -> np.ndarray       # clamp(model(X) * cap, 0, cap), cap = data.rul_cap (M4)
 train_centralized(cfg, ds, seed) -> tuple[RULModel, dict]   # dict: per-epoch train_loss, val_mae, best_epoch
+    # [added when built] reads cfg['model'] = {hidden, layers, lr, dropout} (set by tuning, M2) and cfg['train'];
+    # best_epoch = 0-based index into the per-epoch lists; the returned model has that epoch's weights
 ```
 
 ## Partition

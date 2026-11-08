@@ -24,3 +24,13 @@ def slice_cfg() -> dict:
     cfg = copy.deepcopy(cfg)
     cfg["data"]["raw_dir"] = str(SLICE_DIR)
     return cfg
+
+
+@pytest.fixture(scope="session")
+def slice_ds(slice_dir):
+    """The slice run through the whole data pipeline, built once per test session. Read-only: don't modify."""
+    from rulfl.data.pipeline import build_dataset
+    with open(REPO / "configs" / "base.yaml") as f:
+        cfg = yaml.safe_load(f)
+    cfg["data"]["raw_dir"] = str(slice_dir)
+    return build_dataset(cfg)
