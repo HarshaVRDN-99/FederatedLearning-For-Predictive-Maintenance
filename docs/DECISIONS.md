@@ -114,6 +114,35 @@ run_federated(cfg, ds, manifest, algo: str, seed: int) -> dict   # per round: gl
 
 `sample_weight` lets FedLA reuse `client_update` unchanged.
 
+[changed when built] `client_update` gains a required `seed: int` argument (before `sample_weight`):
+`client_update(model, global_weights, X, y, cfg, mu, seed, sample_weight=None)`. The seed fixes the client's
+batch order and dropout masks. It comes from `client_seed(run_seed, round, client)`, which depends only on
+those three numbers. Reason: the frozen signature had no source of randomness that is the same in the plain
+simulator and in Flower (whose clients run in separate workers), so Gate 2 could not be met exactly.
+`client_update` reads `cfg['fl']` E, lr (set by the pilot, F7), batch and clip. `X, y` are windows and labels in
+cycles; it divides by `rul_cap` itself, as `train_centralized` does. `global_weights` is snapshotted with real
+copies before training (`state_dict()` returns live references; without the copy FedProx's (p − g) stays 0).
+
+[as built] `run_federated(cfg, ds, manifest, algo, seed)` (`src/rulfl/fl/simulate.py`), signature unchanged:
+- Start weights: `torch.manual_seed(seed)` then build the model, exactly as `train_centralized`, so a federated and
+  a centralized run with the same seed start from identical weights.
+- Rounds are numbered 1..R (like Flower's `server_round`); client k in round r uses `client_seed(seed, r, k)`.
+- `manifest` is read as `{"train": {engine: client}, "val": {engine: client}}`; keys may be int or str (JSON).
+  This is what the partitioner's manifest file (PT7) must contain.
+- `algo`: `"fedavg"` (μ = 0), `"fedprox"` (μ = `cfg['fl']['mu']`, set by F5) or `"fedla"` (μ = 0 plus
+  `sample_weight`, LA5). Anything else raises `ValueError`. FedLA: before round 1 each client's
+  `label_histogram`, server sums them, each client gets `fedla_weights` once (LA4) from `cfg['fedla']`.
+- LA6 bytes, made exact: K histograms of 6 counts up + the global histogram down to each of the K clients
+  (down counted per client, as F8 does for weights), 4 bytes per count: 2 × K × 6 × 4 (240 bytes at K = 5),
+  added once, to round 1's bytes.
+- Returns `{"val_mae": [R], "client_val_mae": [R × K], "bytes": [R], "best_round": int, "best_state": dict}`.
+  `client_val_mae` is nan for a client with no routed validation engine. `best_round` = first round with the
+  lowest global validation MAE; `best_state` = that round's global weights (F6).
+- Server aggregation `fedavg(updates)` with `updates = [(weights, n_windows), ...]` (F3).
+- Test of "K = 1 FedAvg equals centralized": one client, one round of E epochs equals a hand-written centralized
+  loop with the same start weights and batch order (to 1e-6). Not compared with `train_centralized` itself:
+  its batch order comes from `seed`, a client's from `client_seed`, and F2 restarts Adam every round.
+
 ## FedLA
 
 Evidence (real FD004 training engines, H = 1, K = 5): every engine lives > 125 cycles, so each passes through every
