@@ -130,6 +130,9 @@ Client sizes also differ (6,673 vs 16,243 windows), so window-weighted aggregati
 | LA5 | FedLA = FedAvg code path with `sample_weight`, μ = 0, same window-count aggregation | Only the weights differ, so FedLA and FedAvg stay paired |
 | LA6 | Communication: K × 6 counts up and 6 down, once; added to bytes communicated | Exact accounting |
 | LA7 | Limitation stated in the report: histograms reveal each client's label distribution | No privacy guarantees are claimed (CLAUDE.md rule 8) |
+| LA8 | Labels outside [0, cap], or bin edges that do not rise strictly from 0 to cap, raise ValueError | A bad label would otherwise land silently in the wrong bin |
+| LA9 | `fedla_weights` raises if `local_counts` differs from `label_histogram(y)`, or if global < local in any bin | Catches a caller passing the wrong client's histogram |
+| LA10 | "Mean 1 before clipping" holds only if the client has windows in every bin with global mass; true on real FD004 (every engine outlives 125 cycles). Renormalisation guarantees mean 1 regardless | States the limit of the note under LA7 |
 
 Note: before clipping the weights already have mean 1 on each client (Σ_b p_local(b)·p_global(b)/p_local(b) = 1),
 so renormalisation only matters after clipping. Required tests: weights = 1 when local = global; mean = 1 after
