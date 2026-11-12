@@ -124,6 +124,10 @@ simulator and in Flower (whose clients run in separate workers), so Gate 2 could
 `client_update` reads `cfg['fl']` E, lr (set by the pilot, F7), batch and clip. `X, y` are windows and labels in
 cycles; it divides by `rul_cap` itself, as `train_centralized` does. `global_weights` is snapshotted with real
 copies before training (`state_dict()` returns live references; without the copy FedProx's (p − g) stays 0).
+`client_update` also (a) turns on `torch.use_deterministic_algorithms(True)` itself, because Flower clients
+run in fresh worker processes where nothing else sets it (M5); the thread count (M5: 3) must still be set in each
+Flower worker by the Flower `train_fn`; (b) casts `sample_weight` to float32, so FedLA's loss is computed in the
+same precision as FedAvg's (`fedla_weights` returns float64, which measurably changed the trained weights).
 
 [as built] `run_federated(cfg, ds, manifest, algo, seed)` (`src/rulfl/fl/simulate.py`), signature unchanged:
 - Start weights: `torch.manual_seed(seed)` then build the model, exactly as `train_centralized`, so a federated and

@@ -30,12 +30,13 @@ def client_update(model: RULModel, global_weights: dict, X: np.ndarray, y: np.nd
     g = {k: v.detach().clone() for k, v in global_weights.items()}   # snapshot BEFORE training (F4)
     model.load_state_dict(g)                                          # start from the global model
     model.train()
-    torch.manual_seed(seed)                                           # e.g. dropout masks (2-layer GRU)
+    torch.use_deterministic_algorithms(True)                          # M5; Flower workers are fresh processes
+    torch.manual_seed(seed)                                         # e.g. dropout masks (2-layer GRU)
     rng = np.random.default_rng(seed)                                 # batch order
     opt = torch.optim.Adam(model.parameters(), lr=f["lr"])
 
     X_t, y_t = torch.from_numpy(X), torch.from_numpy(y) / cap        # train on RUL / 125 (M3)
-    w_t = None if sample_weight is None else torch.from_numpy(sample_weight)
+    w_t = None if sample_weight is None else torch.from_numpy(sample_weight).float()   # float32 like FedAvg's loss
     for _ in range(f["E"]):
         order = torch.from_numpy(rng.permutation(len(X)))
         for i in range(0, len(X), f["batch"]):

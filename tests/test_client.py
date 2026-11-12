@@ -115,3 +115,22 @@ def test_client_seed_is_fixed_and_distinct():
     assert client_seed(1, 3, 2) == client_seed(1, 3, 2)
     seeds = {client_seed(s, r, k) for s in (1, 2) for r in range(1, 61) for k in range(5)}
     assert len(seeds) == 2 * 60 * 5                          # no two clients/rounds/runs share a seed
+
+
+def test_sample_weight_precision_does_not_matter(cfg, data):
+    """fedla_weights returns float64; the loss must still be computed in float32 like FedAvg's, so the arms
+    differ only in the weights, not in arithmetic precision (LA5)."""
+    X, y = data
+    g = global_weights()
+    w64 = np.where(y == 125, 0.7, 1.3)                       # float64, as fedla_weights returns
+    a, _ = client_update(new_model(), g, X, y, cfg, mu=0.0, seed=1, sample_weight=w64)
+    b, _ = client_update(new_model(), g, X, y, cfg, mu=0.0, seed=1, sample_weight=w64.astype(np.float32))
+    assert all(torch.equal(a[k], b[k]) for k in a)
+
+
+def test_client_turns_on_deterministic_mode_itself(cfg, data):
+    """M5. In Flower each client runs in its own worker process, where nobody else has set the flag."""
+    X, y = data
+    torch.use_deterministic_algorithms(False)                # a fresh worker process starts like this
+    client_update(new_model(), global_weights(), X, y, cfg, mu=0.0, seed=1)
+    assert torch.are_deterministic_algorithms_enabled()
