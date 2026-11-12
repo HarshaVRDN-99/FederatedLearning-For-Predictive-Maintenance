@@ -137,9 +137,11 @@ copies before training (`state_dict()` returns live references; without the copy
 - LA6 bytes, made exact: K histograms of 6 counts up + the global histogram down to each of the K clients
   (down counted per client, as F8 does for weights), 4 bytes per count: 2 × K × 6 × 4 (240 bytes at K = 5),
   added once, to round 1's bytes.
-- Returns `{"val_mae": [R], "client_val_mae": [R × K], "bytes": [R], "best_round": int, "best_state": dict}`.
-  `client_val_mae` is nan for a client with no routed validation engine. `best_round` = first round with the
-  lowest global validation MAE; `best_state` = that round's global weights (F6).
+- Returns `{"val_mae": [R+1], "client_val_mae": [(R+1) × K], "bytes": [R+1], "best_round": int, "best_state": dict}`.
+  Index 0 = round 0, the untrained start weights, scored before any training (F10, as the Flower app does);
+  its bytes are 0. List index = round number. `client_val_mae` is nan for a client with no routed validation
+  engine. `best_round` (0..R) = first round with the lowest global validation MAE (ties keep the earlier
+  round, F10); `best_state` = that round's global weights (F6).
 - Server aggregation `fedavg(updates)` with `updates = [(weights, n_windows), ...]` (F3).
 - Test of "K = 1 FedAvg equals centralized": one client, one round of E epochs equals a hand-written centralized
   loop with the same start weights and batch order (to 1e-6). Not compared with `train_centralized` itself:

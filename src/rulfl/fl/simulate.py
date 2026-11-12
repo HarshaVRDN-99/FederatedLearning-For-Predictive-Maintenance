@@ -37,8 +37,9 @@ def mae(model: RULModel, X: np.ndarray, y: np.ndarray, cap: int) -> float:
 def run_federated(cfg: dict, ds: Dataset, manifest: dict, algo: str, seed: int) -> dict:
     """Federated training: R rounds, K clients, all clients every round (F1), all R rounds always run (F6).
     manifest = {'train': {engine: client}, 'val': {engine: client}} (PT5, PT7).  algo = 'fedavg' | 'fedprox' | 'fedla'.
-    Returns per-round lists 'val_mae' (all validation windows), 'client_val_mae' (K values: each client's routed
-    validation engines), 'bytes' (F8), plus 'best_round' (counted from 1) and 'best_state' (its global weights)."""
+    Returns per-round lists for rounds 0..R (round 0 = start weights, F10; list index = round number):
+    'val_mae' (all validation windows), 'client_val_mae' (K values: each client's routed validation engines),
+    'bytes' (F8; 0 for round 0), plus 'best_round' (0..R) and 'best_state' (that round's global weights)."""
     m, f, cap = cfg["model"], cfg["fl"], cfg["data"]["rul_cap"]
     K, R = f["K"], f["R"]
     if algo in ("fedavg", "fedla"):
@@ -67,16 +68,22 @@ def run_federated(cfg: dict, ds: Dataset, manifest: dict, algo: str, seed: int) 
         hist_bytes = 2 * K * len(edges) * 4                   # K x 6 counts up + K x 6 down, 4 bytes each (LA6)
 
     log = {"val_mae": [], "client_val_mae": [], "bytes": [], "best_round": 0, "best_state": None}
+
+    def score(rnd: int, weights_now: dict, bytes_sent: int) -> None:
+        """Log one round on validation only; keep it if strictly better than every earlier round (ties keep
+        the earlier round, F10)."""
+        model.load_state_dict(weights_now)
+        log["val_mae"].append(mae(model, ds.X_val, ds.y_val, cap))
+        log["client_val_mae"].append([mae(model, ds.X_val[r], ds.y_val[r], cap) for r in val_rows])
+        log["bytes"].append(bytes_sent)
+        if log["val_mae"][-1] < min(log["val_mae"][:-1], default=float("inf")):
+            log["best_round"], log["best_state"] = rnd, {k: v.clone() for k, v in weights_now.items()}
+
+    score(0, global_w, 0)                                     # round 0 = untrained start weights (F10)
     for rnd in range(1, R + 1):                               # rounds count from 1, like Flower's server_round
         updates = [client_update(model, global_w, ds.X_train[r], ds.y_train[r], cfg,
                                  mu=mu, seed=client_seed(seed, rnd, k), sample_weight=weights[k])
                    for k, r in enumerate(train_rows)]
         global_w = fedavg(updates)
-
-        model.load_state_dict(global_w)                       # score the new global model on validation only
-        log["val_mae"].append(mae(model, ds.X_val, ds.y_val, cap))
-        log["client_val_mae"].append([mae(model, ds.X_val[r], ds.y_val[r], cap) for r in val_rows])
-        log["bytes"].append(2 * K * n_params * 4 + (hist_bytes if rnd == 1 else 0))   # down + up, float32 (F8)
-        if log["val_mae"][-1] < min(log["val_mae"][:-1], default=float("inf")):   # strictly better
-            log["best_round"], log["best_state"] = rnd, {k: v.clone() for k, v in global_w.items()}
+        score(rnd, global_w, 2 * K * n_params * 4 + (hist_bytes if rnd == 1 else 0))   # down + up, float32 (F8)
     return log

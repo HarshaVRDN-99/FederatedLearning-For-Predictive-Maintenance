@@ -36,6 +36,7 @@ def test_k1_fedavg_equals_centralized_training(cfg, slice_ds):
     1 round of 2 epochs vs a hand-written 2-epoch loop with the same start weights and the same batch order."""
     cfg["fl"]["K"] = 1
     out = run_federated(cfg, slice_ds, manifest_for(slice_ds, 1), "fedavg", seed=7)
+    assert out["best_round"] == 1                                 # trained beats round 0 (untrained), so compare it
 
     m, f, cap = cfg["model"], cfg["fl"], cfg["data"]["rul_cap"]
     torch.manual_seed(7)                                          # same start as train_centralized(seed=7)
@@ -65,23 +66,24 @@ def load(cfg, ds, state):
 
 
 def test_logs_every_round_with_exact_bytes(cfg, slice_ds):
-    """F6: one entry per round. F8: bytes per round = 2 (down + up) x K x n_parameters x 4 (float32)."""
+    """F6/F10: one entry per round, round 0 = start weights. F8: bytes per round = 2 (down + up) x K x
+    n_parameters x 4 (float32); round 0 sends nothing."""
     cfg["fl"].update(K=2, R=3)
     out = run_federated(cfg, slice_ds, manifest_for(slice_ds, 2), "fedavg", seed=1)
     n_params = sum(v.numel() for v in out["best_state"].values())
-    assert len(out["val_mae"]) == 3
-    assert [len(c) for c in out["client_val_mae"]] == [2, 2, 2]
-    assert out["bytes"] == [2 * 2 * n_params * 4] * 3
+    assert len(out["val_mae"]) == 4                                   # rounds 0, 1, 2, 3
+    assert [len(c) for c in out["client_val_mae"]] == [2, 2, 2, 2]
+    assert out["bytes"] == [0] + [2 * 2 * n_params * 4] * 3
 
 
 def test_returns_the_best_validation_round(cfg, slice_ds):
-    """F6: all R rounds run; the reported model is the round with the lowest global validation MAE."""
+    """F6/F10: all R rounds run; the reported model is the round (0..R) with the lowest global validation MAE."""
     cfg["fl"].update(K=2, R=3)
     out = run_federated(cfg, slice_ds, manifest_for(slice_ds, 2), "fedavg", seed=1)
-    best = int(np.argmin(out["val_mae"])) + 1                         # rounds count from 1
+    best = int(np.argmin(out["val_mae"]))                             # list index = round number (0..R)
     assert out["best_round"] == best
     pred = predict_rul(load(cfg, slice_ds, out["best_state"]), slice_ds.X_val, 125)
-    assert np.abs(pred - slice_ds.y_val).mean() == pytest.approx(out["val_mae"][best - 1])
+    assert np.abs(pred - slice_ds.y_val).mean() == pytest.approx(out["val_mae"][best])
 
 
 def test_client_val_mae_uses_only_that_clients_engines(cfg, slice_ds):
@@ -93,7 +95,7 @@ def test_client_val_mae_uses_only_that_clients_engines(cfg, slice_ds):
     for k in range(2):
         mine = np.isin(slice_ds.engine_val, [int(e) for e, c in man["val"].items() if c == k])
         mae = np.abs(predict_rul(model, slice_ds.X_val[mine], 125) - slice_ds.y_val[mine]).mean()
-        assert mae == pytest.approx(out["client_val_mae"][out["best_round"] - 1][k])
+        assert mae == pytest.approx(out["client_val_mae"][out["best_round"]][k])
 
 
 def test_same_seed_same_run(cfg, slice_ds):
@@ -148,9 +150,29 @@ def test_fedla_with_skew_differs_from_fedavg(cfg, slice_ds):
 
 def test_fedla_bytes_add_the_histograms_once(cfg, slice_ds):
     """LA6: before round 1, K histograms of 6 counts go up and the global one goes down to each of the K
-    clients; 4 bytes per count, as F8 counts 4 bytes per weight. Later rounds cost the same as FedAvg."""
+    clients; 4 bytes per count, as F8 counts 4 bytes per weight. Counted in round 1; round 0 sends nothing;
+    later rounds cost the same as FedAvg."""
     cfg["fl"].update(K=2, R=2)
     man = manifest_by_lifetime(slice_ds)
     avg = run_federated(cfg, slice_ds, man, "fedavg", seed=1)["bytes"]
     la = run_federated(cfg, slice_ds, man, "fedla", seed=1)["bytes"]
-    assert la == [avg[0] + 2 * 2 * 6 * 4, avg[1]]
+    assert la == [0, avg[1] + 2 * 2 * 6 * 4, avg[2]]
+
+
+def test_round_0_scores_the_untrained_start_weights(cfg, slice_ds):
+    """F10: before any training, the start weights (same as train_centralized(seed)) are scored as round 0."""
+    cfg["fl"].update(K=2, R=1)
+    out = run_federated(cfg, slice_ds, manifest_for(slice_ds, 2), "fedavg", seed=3)
+    m = cfg["model"]
+    torch.manual_seed(3)
+    start = RULModel(slice_ds.X_train.shape[2], m["hidden"], m["layers"], m["dropout"])
+    mae0 = np.abs(predict_rul(start, slice_ds.X_val, 125) - slice_ds.y_val).mean()
+    assert out["val_mae"][0] == pytest.approx(mae0)
+
+
+def test_ties_keep_the_earlier_round_including_round_0(cfg, slice_ds):
+    """F10: lr = 0 means training changes nothing, so every round ties and round 0 must be reported."""
+    cfg["fl"].update(K=2, R=2, lr=0.0)
+    out = run_federated(cfg, slice_ds, manifest_for(slice_ds, 2), "fedavg", seed=1)
+    assert out["val_mae"][0] == out["val_mae"][1] == out["val_mae"][2]
+    assert out["best_round"] == 0
