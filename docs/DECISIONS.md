@@ -104,8 +104,6 @@ skew(labels_by_client: list[np.ndarray], all_labels: np.ndarray) -> float       
 | F6 | Every run does all R rounds (no early stopping); global validation MAE (all validation engines) after every round; the reported model is the best-validation round | Identical round counts for reference and Flower; enables rounds-to-110% |
 | F7 | E, R and federated lr set in the pilot: E ∈ {1, 3} × lr ∈ {tuned lr, tuned lr / 3}, R = 60, H ∈ {0, 1}, seeds 101–102, validation only. Pick the setting where FedAvg learns best at H = 0. If FedAvg does not degrade at H = 1, switch to K = 10 (proposal fallback) before the main grid | Settings chosen before any result that matters; the fallback keeps the study meaningful |
 | F8 | Bytes communicated per round = 2 × K × n_parameters × 4 (float32 down + up); FedLA adds its one-time histograms | Defines the communication metric exactly |
-| F9 | The Flower server is always Flower's plain `FedAvg` (`fraction_train=1.0`, `min_train_nodes=min_available_nodes=K`, `fraction_evaluate=0.0`, `weighted_by_key="num-examples"`), for all three arms. Training goes through a pluggable `train_fn(arrays, client_id, config) -> (new_arrays, n_training_windows)`; the client is stateless and never uses `context.state` | One server for FedAvg, FedProx and FedLA, since μ and sample weights live in the client loss (F4, LA5). Flower's built-in `FedProx` would apply μ a second time, and it subclasses `FedAvg`, so the test checks `type(s) is FedAvg`, not `isinstance` |
-| F10 | Evaluation is server-side only (`evaluate_fn`), on all validation engines, after every round including round 0 (the initial weights). The best round is the lowest validation MAE; ties keep the earlier round | Implements F6 the same way as the reference simulator, so Gate 2 compares like with like. Round 0 gives the untrained baseline for every run |
 
 Frozen signatures:
 
@@ -115,41 +113,6 @@ run_federated(cfg, ds, manifest, algo: str, seed: int) -> dict   # per round: gl
 ```
 
 `sample_weight` lets FedLA reuse `client_update` unchanged.
-
-[changed when built] `client_update` gains a required `seed: int` argument (before `sample_weight`):
-`client_update(model, global_weights, X, y, cfg, mu, seed, sample_weight=None)`. The seed fixes the client's
-batch order and dropout masks. It comes from `client_seed(run_seed, round, client)`, which depends only on
-those three numbers. Reason: the frozen signature had no source of randomness that is the same in the plain
-simulator and in Flower (whose clients run in separate workers), so Gate 2 could not be met exactly.
-`client_update` reads `cfg['fl']` E, lr (set by the pilot, F7), batch and clip. `X, y` are windows and labels in
-cycles; it divides by `rul_cap` itself, as `train_centralized` does. `global_weights` is snapshotted with real
-copies before training (`state_dict()` returns live references; without the copy FedProx's (p − g) stays 0).
-`client_update` also (a) turns on `torch.use_deterministic_algorithms(True)` itself, because Flower clients
-run in fresh worker processes where nothing else sets it (M5); the thread count (M5: 3) must still be set in each
-Flower worker by the Flower `train_fn`; (b) casts `sample_weight` to float32, so FedLA's loss is computed in the
-same precision as FedAvg's (`fedla_weights` returns float64, which measurably changed the trained weights).
-
-[as built] `run_federated(cfg, ds, manifest, algo, seed)` (`src/rulfl/fl/simulate.py`), signature unchanged:
-- Start weights: `torch.manual_seed(seed)` then build the model, exactly as `train_centralized`, so a federated and
-  a centralized run with the same seed start from identical weights.
-- Rounds are numbered 1..R (like Flower's `server_round`); client k in round r uses `client_seed(seed, r, k)`.
-- `manifest` is read as `{"train": {engine: client}, "val": {engine: client}}`; keys may be int or str (JSON).
-  This is what the partitioner's manifest file (PT7) must contain.
-- `algo`: `"fedavg"` (μ = 0), `"fedprox"` (μ = `cfg['fl']['mu']`, set by F5) or `"fedla"` (μ = 0 plus
-  `sample_weight`, LA5). Anything else raises `ValueError`. FedLA: before round 1 each client's
-  `label_histogram`, server sums them, each client gets `fedla_weights` once (LA4) from `cfg['fedla']`.
-- LA6 bytes, made exact: K histograms of 6 counts up + the global histogram down to each of the K clients
-  (down counted per client, as F8 does for weights), 4 bytes per count: 2 × K × 6 × 4 (240 bytes at K = 5),
-  added once, to round 1's bytes.
-- Returns `{"val_mae": [R+1], "client_val_mae": [(R+1) × K], "bytes": [R+1], "best_round": int, "best_state": dict}`.
-  Index 0 = round 0, the untrained start weights, scored before any training (F10, as the Flower app does);
-  its bytes are 0. List index = round number. `client_val_mae` is nan for a client with no routed validation
-  engine. `best_round` (0..R) = first round with the lowest global validation MAE (ties keep the earlier
-  round, F10); `best_state` = that round's global weights (F6).
-- Server aggregation `fedavg(updates)` with `updates = [(weights, n_windows), ...]` (F3).
-- Test of "K = 1 FedAvg equals centralized": one client, one round of E epochs equals a hand-written centralized
-  loop with the same start weights and batch order (to 1e-6). Not compared with `train_centralized` itself:
-  its batch order comes from `seed`, a client's from `client_seed`, and F2 restarts Adam every round.
 
 ## FedLA
 
@@ -194,6 +157,11 @@ fedla_weights(y: np.ndarray, local_counts, global_counts, edges, cap, clip) -> n
 | E6 | Head-refit probe (diagnostic, labelled as such): take a run's best-round global model, freeze `model.gru`, re-initialise `model.head`, train only the head on all training windows with M3 settings (early stop on validation), then score on test | If test MAE returns near centralized, the damage is in the head; if not, it is in the features |
 | E7 | Comparisons are paired by (H, seed). Per H: mean difference vs FedAvg with a 95% bootstrap interval over seeds. One-sided exact Wilcoxon signed-rank per H and pooled over H ≥ 0.5 (15 pairs). Implemented with numpy only | Paired design removes partition luck. With 5 pairs the smallest one-sided p is 1/32 ≈ 0.031, so per-H tests are weak; the intervals and the pooled test carry the evidence. Hypotheses written down before the main grid |
 | E8 | Every run saves its config, manifest hash, per-round log, final metrics, best checkpoint and test predictions. Every report number and figure is generated from these files | CLAUDE.md rule 6 |
+| E9 |Empty life-stage groups return NaN, not 0 | A missing group must not look like a perfect score
+| E10 |	`metrics()` and `life_stage_mae()` raise `ValueError` if `pred` and `true` have different lengths or are empty | Prevents silently producing invalid metrics
+| E11 |	`life_stage_mae()` returns near_failure, mid, healthy, and their respective n_near_failure, n_mid, n_healthy counts | Downstream reporting needs both scores and group sizes
+| E12 |	Non-finite predictions (NaN or infinity) raise `ValueError` | Prevents invalid predictions from silently entering evaluation
+| E13 |	NASA score is a sum, so one extremely late prediction can dominate it | Important limitation when interpreting the reported score
 
 Frozen signatures:
 
